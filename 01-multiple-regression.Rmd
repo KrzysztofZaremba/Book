@@ -3,6 +3,7 @@
 library(car)
 library(wooldridge)
 library(datarium)
+library(tidyverse)
 simpleAnova <- function(object, ...) {
 
   # Compute anova table
@@ -33,6 +34,570 @@ simpleAnova <- function(object, ...) {
 
 
 # Multiple Linear Regression
+
+## Interactions in a Regression
+###  Why Do We Ever Need an Interaction?
+
+Suppose you're working as a data analyst for a clothing brand that runs online campaigns through TikTok. Your job is to predict customer purchases based on how much was spent on tik tok ads—and whether they’re under 25.
+
+You’ve collected data on 200 customers, including:
+
+- How much money overall was spent son TikTok ads,
+- Whether the customer is young (under 25),
+- How much they ended up spending on your products.
+
+Here is a quick look at the data:
+
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+data <- tibble(
+  tiktok_ad_spend = runif(200, 0, 500),
+  young = sample(0:1, 200, replace = TRUE)
+)
+
+# True model includes interaction
+beta_0 <- 150
+beta_1 <- 0.2
+beta_2 <- 40
+beta_3 <- 0.7
+
+data$sales <- with(data, beta_0 + beta_1 * tiktok_ad_spend + beta_2 * young + 
+                           beta_3 * tiktok_ad_spend * young + rnorm(200, sd = 40))
+
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(knitr)
+kable(head(data))
+```
+
+Now let's visualize the relationship between ad spending and sales:
+
+```{r, fig.height=3, out.width='100%', echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+
+ggplot(data, aes(x = tiktok_ad_spend, y = sales, color = factor(young))) +
+  geom_point(alpha = 0.6) +
+  labs(color = "Young (1=Yes)",
+       y = "Predicted Sales", x = "TikTok Ad Spend") +
+  theme_minimal()
+```
+
+
+We begin with estimating a simple linear model, estimating the effect of TikTok ad spending on purchases and the dummy for whether you are young:
+
+\[ \text{Sales}_i = \beta_0 + \beta_1 \cdot \text{AdSpend}_i + \beta_2 \cdot \text{Young}_i + u_i \]
+
+Here:
+
+- \(\text{AdSpend}_i\) is the money spent on TikTok ads for individual \(i\),
+- \(\text{Young}_i = 1\) if individual \(i\) is under 25, and 0 otherwise,
+- \(\text{Sales}_i\) is the value of purchases made by individual \(i\).
+
+This model assumes a **common slope** on ad spending for both young and old customers. One dollar more in ads on tik tok, would increase sales to young and old people by the same amount. That is, it assumes this marketing campaign is equally effective for both old and young people. 
+
+We estimate the model and we get the following:
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+model_inter <- lm(sales ~ tiktok_ad_spend + young, data = data)
+summary(model_inter)
+```
+
+
+**Interpretation**:
+
+- \(\beta_1\) is the estimated average increase in sales per dollar of ad spend among all customers. One dollar more in ads increases sales by 0.56. 
+- \(\beta_2\) is the average level difference between young and old. On average, young spend 208 dollars more than old. 
+
+But the graph reveals something important: the relationship between ad spending and purchases appears **steeper** for younger customers. In other words, the increase in purchases per extra dollar spent might be **larger** for them than for older consumers.
+
+If both groups truly react differently to ads, then a single common slope is misleading. We should give each group its own slope to improve predictions. So how can we model that? How can we allow the effect of TikTok ads to vary depending on age?
+
+
+### 2. Letting the Slope Vary by Age: Adding an Interaction
+
+To allow the effect of TikTok ad spending to vary by age, we introduce an **interaction term** into our regression model. This term captures how the relationship between ad spending and sales changes depending on whether the customer is young.
+
+Specifically, we define a new variable:
+
+\[
+\text{Interaction}_i = \text{AdSpend}_i \times \text{Young}_i
+\]
+
+This variable is simply the product of TikTok ad spending and the dummy for being under 25. If a customer is not young (i.e., \(\text{Young}_i = 0\)), then the interaction term is always zero. If a customer is young (\(\text{Young}_i = 1\)), the interaction term equals the ad spending for that individual. This is what allows us to fit different slopes for young and older customers.
+
+We augment the dataset with this new variable:
+
+```{r}
+data$interaction <- data$tiktok_ad_spend * data$young
+kable(head(data), caption = "Dataset with interaction term")
+```
+
+Now we estimate the following model:
+
+\[
+\text{Sales}_i = \beta_0 + \beta_1 \cdot \text{AdSpend}_i + \beta_2 \cdot \text{Young}_i + \beta_3 \cdot (\text{AdSpend}_i \times \text{Young}_i) + u_i
+\]
+
+In this model:
+
+- \(\beta_0\) is the intercept for older customers (the baseline group),
+- \(\beta_1\) is the slope of ad spending for older customers,
+- \(\beta_2\) is the difference in intercept between young and old customers,
+- \(\beta_3\) captures the **difference in slope** between young and older customers.
+
+#### Why This Works
+
+Let’s break this down by age group.
+
+**For older customers** (\(\text{Young}_i = 0\)), the model simplifies to:
+
+\[
+\text{Sales}_i = \beta_0 + \beta_1 \cdot \text{AdSpend}_i + u_i
+\]
+
+So:
+
+- \(\beta_0\) is the average sales for older customers when no money is spent on ads,
+- \(\beta_1\) is the increase in sales per dollar of ad spending for older customers.
+
+**For young customers** (\(\text{Young}_i = 1\)), the model becomes:
+
+\[
+\text{Sales}_i = (\beta_0 + \beta_2) + (\beta_1 + \beta_3) \cdot \text{AdSpend}_i + u_i
+\]
+
+So:
+
+- The intercept is now shifted by \(\beta_2\), reflecting how young customers differ from older ones when ad spending is zero,
+- The slope is on ads is \(\beta_1 + \beta_3\), which shows how sales increase with ad spending for young customers.
+
+This structure allows us to compare **both** the baseline level of purchases and the responsiveness to advertising between the two groups.
+
+> **Important:** The coefficient \(\beta_3\) on the interaction term is **not** the slope for young customers. It represents how much more (or less) sensitive young customers are to ad spending **compared to** older customers. To obtain the slope for young customers, you must add the baseline slope \(\beta_1\) and the differential effect \(\beta_3\).
+
+Next, we’ll estimate this model in R and visualize how the fitted lines differ for young and old customers.
+
+Let's estimate this model:
+
+```{r}
+model_inter <- lm(sales ~ tiktok_ad_spend * young, data = data)
+summary(model_inter)
+```
+
+Here is a visualization of the fitted regression lines for young and older customers:
+
+```{r, fig.height=3, out.width='100%'}
+ggplot(data, aes(x = tiktok_ad_spend, y = sales, color = factor(young))) +
+  geom_point(alpha = 0.6) +
+  labs(title = "With Interaction Term", color = "Young (1=Yes)",
+       y = "Predicted Sales", x = "TikTok Ad Spend") +
+  theme_minimal()
+```
+
+#### Interpretation of Coefficients
+
+We got the following coefficients
+
+- Intercept (\(\beta_0\)) = 150.4
+- TikTok Ad Spend (\(\beta_1\)) = 0.22
+- Young (\(\beta_2\)) = 29.3
+- Interaction (\(\beta_3\)) = 0.71
+
+Then we interpret:
+
+- \(\beta_0 = 150.4\): Baseline sales for older customers when ad spend is 0.
+- \(\beta_1 = 0.22\): For **older customers**, each extra dollar spent on TikTok ads increases predicted sales by \$0.22.
+- \(\beta_2 = 29.3\): At 0 ad spend, **young customers** spend \$40 more than older ones on average.
+- \(\beta_3 = 0.71\): The slope of ad spending is **\$0.71 greater** for young customers than for older ones.
+
+So, the slope for young customers is \(\beta_1 + \beta_3 = 0.93\), which means that for them, each additional ad dollar generates \$0.93 more in purchases.
+
+#### Testing the Difference in Slopes
+
+The difference in slopes is given by the coefficient on the interaction term:
+
+\[
+H_0: \beta_3 = 0 \quad \text{vs.} \quad H_1: \beta_3 \neq 0
+\]
+
+A statistically significant \(\beta_3\) tells us that the responsiveness to ads **differs** between young and older customers.
+
+This is tested directly via the p-value of the interaction term in the `summary(model_inter)` output.
+
+
+#### Testing the Slope for Older Customers
+
+To see whether tik tok ads have any effect on old customers, we test whether \(\beta_1\),  is different from 0
+
+\[
+H_0: \beta_1 = 0 \quad \text{vs.} \quad H_1: \beta_1 \neq 0
+\]
+
+If \(\beta_1\) is significantly different from zero, then ad spending affects sales for older customers.
+
+
+
+#### Testing the Slope for Young Customers
+
+To see whether tik tok ads have any effect on young customers, we test whether the slope for young people is different from 0. Remember that the slope for young people is the sum: $\beta_1 +\beta+3$. So we would test the hypothesis:
+
+\[
+H_0: \beta_1 +\beta_3= 0 \quad \text{vs.} \quad H_1: \beta_1 +\beta_3 \neq 0
+\]
+
+We will explore how to test this kind of hypotheses later in the book. 
+
+
+#### Making predictions
+
+Suppose we want to estimate how much **sales** we can expect from a **young customer** when ad spending is **100**. To do this, we use the estimated regression equation:
+
+\[
+\begin{aligned}
+E[\text{Sales}_i \mid \text{Ad_spend}_i = 100,\ \text{Young}_i = 1] 
+&= \hat\beta_0 + \hat\beta_1 \cdot 100 + \hat\beta_2 \cdot 1 + \hat\beta_3 \cdot (100 \times 1) \\
+&= 150.4 + 0.22 \cdot 100 + 29.3 + 0.71 \cdot 100 \\
+&= 150.4 + 22 + 29.3 + 71 \\
+&= \mathbf{272.7}
+\end{aligned}
+\]
+
+Now let’s compare this with the expected sales from an **older customer** (i.e., `Young = 0`) with the same ad spending of 100:
+
+\[
+\begin{aligned}
+E[\text{Sales}_i \mid \text{Ad_spend}_i = 100,\ \text{Young}_i = 0] 
+&= \hat\beta_0 + \hat\beta_1 \cdot 100 + \hat\beta_2 \cdot 0 + \hat\beta_3 \cdot (100 \times 0) \\
+&= 150.4 + 0.22 \cdot 100 \\
+&= 150.4 + 22 \\
+&= \mathbf{172.4}
+\end{aligned}
+\]
+
+
+At an ad spending level of 100, we expect **sales of 272.7** from a **young customer**, and **172.4** from an **older customer**. The difference of **100.3** reflects both a higher baseline impact and stronger marginal response to ads for younger individuals.
+
+#### General formulations of interactions of a continuous variable with binary variables
+
+Consider the linear interaction model:
+
+\[
+Y_i = \beta_0 + \beta_1 X_i + \beta_2 D_i + \beta_3 (X_i \cdot D_i) + \varepsilon_i
+\]
+
+Here:
+
+- \( X_i \) is a continuous variable,
+- \( D_i \in \{0, 1\} \) is a binary indicator,
+- \( Y_i \) is the outcome of interest.
+
+Let’s analyze the **expected value** of \( Y_i \), conditional on \( X_i \) and \( D_i \):
+
+\[
+E[Y_i \mid X_i, D_i] = \beta_0 + \beta_1 X_i + \beta_2 D_i + \beta_3 X_i D_i
+\]
+
+And let's see how this expected value depends on $X_i$, and how this dependence changes depending on the group membership. 
+
+
+#####  Marginal Effect of \( X_i \)
+
+The **marginal effect** of \( X_i \) refers to how a **small change in \( X_i \)** affects the expected value of \( Y_i \), holding \( D_i \) fixed. You can also think a about it as a change in $Y_i$ because of one unit change in $X_i$. Mathematically, this is the **partial derivative**:
+
+\[
+\frac{\partial E[Y_i \mid X_i, D_i]}{\partial X_i}
+= \frac{\partial}{\partial X_i} \left( \beta_0 + \beta_1 X_i + \beta_2 D_i + \beta_3 X_i D_i \right)
+\]
+
+Take the derivative term-by-term:
+
+- \( \frac{\partial}{\partial X_i} (\beta_0) = 0 \)
+- \( \frac{\partial}{\partial X_i} (\beta_1 X_i) = \beta_1 \)
+- \( \frac{\partial}{\partial X_i} (\beta_2 D_i) = 0 \)  (D is fixed)
+- \( \frac{\partial}{\partial X_i} (\beta_3 X_i D_i) = \beta_3 D_i \)
+
+So we get:
+
+\[
+\frac{\partial E[Y_i \mid X_i, D_i]}{\partial X_i} = \beta_1 + \beta_3 D_i
+\]
+
+
+##### Intuition
+
+This is simply the effect of $X_i$ on the outcome. This partial derivative clearly shows that it depends on the value of \( D_i \):
+
+- When \( D_i = 0 \), the effect of \( X_i \) is simply \( \beta_1 \).
+- When \( D_i = 1 \), the effect becomes \( \beta_1 + \beta_3 \).
+
+This tells us:  
+> The slope of \( X_i \) is **different in each group** defined by \( D_i \).  
+> The interaction term \( \beta_3 \) captures **how much more (or less)** influential \( X_i \) is for the treated group (\( D_i = 1 \)).
+
+
+#### Example with one continuous variable and categorical variable with more than 2 categories
+
+How much more money do people earn with an extra year of schooling? That’s the central question behind the concept of **returns to education**. Understanding this relationship helps individuals decide whether investing another year in school or university is financially worthwhile.
+
+However, not everyone may benefit equally from education. Because of **structural inequalities**, **discrimination**, and **segmented labor markets**, two individuals — say, one White and one Black — might not receive the same wage increase from the same year of education. 
+
+To examine this, we use microdata from the **American Community Survey (ACS)**, which provides detailed individual-level information on **income**, **education**, **race**.
+
+We are interested in whether **returns to education vary by race**. To allow the effect of education to differ across groups, we include **interaction terms** in our regression: the slope of the education-income relationship can vary depending on an individual’s racial identity.
+
+We limit our analysis to individuals from three racial groups:
+
+- **White** (reference group),
+- **Black or African American**,
+- **Asian**.
+
+We convert the categorical race variable into a set of **three dummy variables**:
+
+- \( D_{\text{Black},i} \) = 1 if individual \( i \) is Black, 0 otherwise  
+- \( D_{\text{Asian},i} \) = 1 if Asian  
+- Individuals identifying as White are the **reference group**, so no dummy is included for them.
+
+We also interact each dummy with the continuous variable **years of education**, allowing the **slope** of the income–education relationship to differ by race.
+
+---
+
+## The Regression Equation
+
+We estimate the following model:
+
+\[
+\begin{aligned}
+\text{income}_i &= \beta_0 + \beta_1 \cdot \text{Educ}_i 
++ \gamma_{\text{Black}} \cdot D_{\text{Black},i} 
++ \gamma_{\text{Asian}} \cdot D_{\text{Asian},i} \\
+&\quad + \delta_{\text{Black}} \cdot (\text{Educ}_i \cdot D_{\text{Black},i}) 
++ \delta_{\text{Asian}} \cdot (\text{Educ}_i \cdot D_{\text{Asian},i}) 
++ \varepsilon_i
+\end{aligned}
+\]
+
+Where:
+
+- \( \beta_1 \): Return to education for **White** individuals,
+- \( \gamma \) terms: Baseline wage gaps (intercept shifts) for each group,
+- \( \delta \) terms: Differences in **returns to education** compared to Whites. Note that the excluded group is White, so \( \delta \) for each group will measure how much the return to one more year of education differ between that group and white people. It is NOT the return to education for that group. The return to education for that group is the sum of the return to education for white people and the difference in returns to education between that group and white people, that is \( \beta_1 +\delta \) .
+
+
+This model allows us to quantify:
+
+- Whether racial wage gaps exist **even with the same education level** (via \( \gamma_g \)),
+- Whether racial groups receive **different returns** from education (via \( \delta_g \)). That is, is increase in income due to one more years of education different for various groups?
+
+A negative \( \delta_{\text{Black}} \), for example, would mean that **Black workers gain less from each year of schooling** compared to White workers — potentially pointing to unequal treatment or structural barriers.
+
+Let's run a regression on the sample of 10000 workers:
+
+```{r, echo=FALSE}
+acs <- readRDS("data/acs_pums_2022.rds")
+#make race a factor variable, and make it the first one
+acs$race <- factor(acs$race, levels = c("White", "Black", "Asian"))
+
+m=lm(income~education*race, data=acs)
+summary(m)
+
+
+```
+
+Here are the key results:
+
+| Term                    | Estimate   | Interpretation                                                                 |
+|-------------------------|------------|---------------------------------------------------------------------------------|
+| (Intercept)             | –74,523    | Predicted income for White individuals with 0 years of education               |
+| education               | 9,694      | White individuals earn \$9,694 more per additional year of education           |
+| raceBlack               | 50,468     | Black individuals earn \$50,468 more *than Whites* at 0 years of education     |
+| raceAsian               | 50,316     | Asians earn \$50,316 more than Whites at 0 years of education                  |
+| education × raceBlack   | –4,505     | Black individuals earn \$4,505 *less* per year of education than Whites        |
+| education × raceAsian   | –2,962     | Asian individuals earn \$2,962 *less* per year of education than Whites        |
+
+
+Note that no one in the data has 0 years of education, so it's not surprising that intercept is negative and doesn't make much sense. 
+
+##### 🧠 What Do These Results Mean?
+
+- **For White individuals**, the estimated return to education is about **\$9,694 per year**. This means their income increases on average by this amount for each additional year of schooling.
+  
+- **Black individuals** start with a **higher predicted income** at 0 years of schooling compared to Whites — but the **slope is smaller**. Their return to education is:
+  
+  \[
+  \text{Return}_{\text{Black}} = 9694 - 4505 = 5189
+  \]
+  So each year of education increases Black individuals’ income by only **\$5,189** on average.
+
+- **Asian individuals** similarly start with a higher intercept, but their return to education is:
+  
+  \[
+  \text{Return}_{\text{Asian}} = 9694 - 2962 = 6732
+  \]
+  Which is also lower than the return for Whites, though higher than for Black individuals.
+
+##### Prediction
+
+We use the regression results to predict average income for each racial group, holding education at:
+
+- **Bachelor’s degree** → 16 years  
+- **Master’s degree** → 18 years
+
+Let’s plug the values into the model:
+
+#####  White (reference group)
+- Bachelor's:  
+  \[
+  -74523 + 9694 \cdot 16 = -74523 + 155104 = \mathbf{\$80,581}
+  \]
+- Master’s:  
+  \[
+  -74523 + 9694 \cdot 18 = -74523 + 174492 = \mathbf{\$99,969}
+  \]
+
+#####  Black
+- Bachelor's:  
+  \[
+  -74523 + 9694 \cdot 16 + 50468 + (-4505 \cdot 16) \\
+  = -74523 + 155104 + 50468 - 72080 = \mathbf{\$58,969}
+  \]
+- Master’s:  
+  \[
+  -74523 + 9694 \cdot 18 + 50468 + (-4505 \cdot 18) \\
+  = -74523 + 174492 + 50468 - 81090 = \mathbf{\$69,347}
+  \]
+
+##### Asian
+- Bachelor's:  
+  \[
+  -74523 + 9694 \cdot 16 + 50316 + (-2961 \cdot 16) \\
+  = -74523 + 155104 + 50316 - 47376 = \mathbf{\$83,521}
+  \]
+- Master’s:  
+  \[
+  -74523 + 9694 \cdot 18 + 50316 + (-2961 \cdot 18) \\
+  = -74523 + 174492 + 50316 - 53302 = \mathbf{\$96,983}
+  \]
+
+---
+
+### 📌 Summary
+
+| Race  | Bachelor's Degree | Master's Degree |
+|--------|-------------------|------------------|
+| White  | \$80,581          | \$99,969         |
+| Black  | \$58,969          | \$69,347         |
+| Asian  | \$83,521          | \$96,983         |
+
+When White workers moves from having Bachelor's degree to Master's degree (2 more years of education), they earn an additional \$19,388. For Black workers, the increase is \$10,378. For Asian workers, the increase is \$13,462.
+
+
+
+##### 🔍 Implications
+
+Even though Black and Asian individuals have a higher **predicted baseline income**, their **marginal gain from education is lower** than that of White individuals. This could be interpreted in several ways:
+
+- Structural barriers that limit the labor market rewards of education for minorities.
+- Segmented labor markets, where additional education may not translate equally into higher-paying jobs.
+- Residual discrimination that weakens the wage signal of schooling for non-White workers.
+
+
+#### Exercises: 
+
+##### Exercise 1: Software Developer Salaries and Company Type Effects
+
+You are a data analyst at a career platform that tracks job market trends in Mexico. Your team is studying how experience, company type, and their interaction affect the **monthly salary** (in thousands of MXN) of software developers.
+
+We estimate the following model:
+
+\[
+\begin{aligned}
+\text{salary}_i &= \beta_0 + \beta_1 \cdot \text{experience}_i + \beta_2 \cdot \text{Multinational}_i \\
+&\quad + \beta_3 \cdot \text{PublicSector}_i + \beta_4 \cdot (\text{experience}_i \cdot \text{Multinational}_i) \\
+&\quad + \beta_5 \cdot (\text{experience}_i \cdot \text{PublicSector}_i) + \varepsilon_i
+\end{aligned}
+\]
+
+**Regression output:**
+
+| Variable                       | Estimate | Std. Error | p-value |
+|-------------------------------|----------|-------------|---------|
+| Intercept                     | 25.0     | 2.0         | <0.001  |
+| experience                    | 2.0      | 0.3         | <0.001  |
+| Multinational                 | 10.0     | 2.5         | <0.001  |
+| Public Sector                 | -5.0     | 3.0         | 0.10    |
+| experience × Multinational   | 1.0      | 0.4         | 0.01    |
+| experience × Public Sector   | -0.8     | 0.5         | 0.09    |
+
+\( R^2 = 0.74 \quad\quad \text{Adjusted } R^2 = 0.72 \)
+
+---
+
+###### Questions
+
+1. What is the interpretation of the coefficient on `experience`?
+2. What does the coefficient on `Multinational` represent?
+3. Calculate the marginal effect of an additional year of experience in:
+   - a) a Startup
+   - b) a Multinational
+   - c) the Public Sector
+4. Are starting salaries (at 0 years of experience) significantly different between Startups and Public Sector?
+5. Is the **increase** of salary with experience significantly different in Public Sector versus Startup?
+6. Based on the model, which company type offers the **highest marginal return** on experience?
+7. Predict monthly salary for someone with 6 years of experience in:
+   - a) a Startup
+   - b) a Multinational
+   - c) the Public Sector
+8. How well does the model explain salary variation?
+
+---
+
+##### Exercise 2: Housing Prices and Location Effects
+
+You are a data analyst for a real estate firm. Your team estimates the following model to understand how **house size**, **location**, and their interaction affect **price** (in thousands of USD):
+
+\[
+\begin{aligned}
+\text{price}_i &= \beta_0 + \beta_1 \cdot \text{size}_i + \beta_2 \cdot \text{Downtown}_i \\
+&\quad + \beta_3 \cdot \text{Waterfront}_i + \beta_4 \cdot (\text{size}_i \cdot \text{Downtown}_i) \\
+&\quad + \beta_5 \cdot (\text{size}_i \cdot \text{Waterfront}_i) + \varepsilon_i
+\end{aligned}
+\]
+
+**Regression output:**
+
+| Variable                | Estimate | Std. Error | p-value |
+|------------------------|----------|-------------|---------|
+| Intercept              | 150.0    | 10.0        | <0.001  |
+| size                   | 1.20     | 0.15        | <0.001  |
+| Downtown               | 20.0     | 12.0        | 0.09    |
+| Waterfront             | 50.0     | 14.0        | <0.001  |
+| size × Downtown        | 0.05     | 0.19        | 0.79    |
+| size × Waterfront      | 1.50     | 0.25        | <0.001  |
+
+\( R^2 = 0.78 \quad\quad \text{Adjusted } R^2 = 0.76 \)
+
+---
+
+###### Questions
+
+1. Interpret the coefficient on `size`.
+2. What does the coefficient on `Waterfront` represent?
+3. What is the marginal effect of an additional square meter of size:
+   - a) in the Suburb
+   - b) in Downtown
+   - c) on the Waterfront
+4. Are base prices (for size = 0) statistically different between Suburb and Waterfront?
+5. Is the effect of size significantly different in Downtown compared to Suburb?
+6. Would you expect to pay more per m² in Downtown or Waterfront?
+7. Predict the price of an 80 m² house in:
+   - a) the Suburb
+   - b) Downtown
+   - c) the Waterfront
+8. Comment on model fit. Why is adjusted \( R^2 \) lower than \( R^2 \)?
+
+
 
 ## Testing significance of the regression
 
@@ -106,13 +671,18 @@ where:
 
 The decomposition and degrees of freedom (df) are summarized in the table:
 
+
 | Component | Formula | Interpretation | Degrees of Freedom |
-|--||--|--|
-| TSS | \( \sum (y_i - \bar{y})^2 \) | Total variation around the mean | \( n - 1 \) |
-| SSR | \( \sum (\hat{y}_i - \bar{y})^2 \) | Explained variation | \( k \) |
-| SSE | \( \sum (y_i - \hat{y}_i)^2 \) | Unexplained (residual) variation | \( n - k - 1 \) |
+|-----------|---------|----------------|---------------------|
+| TSS       | \( \sum (y_i - \bar{y})^2 \) | Total variation around the mean         | \( n - 1 \)           |
+| SSR       | \( \sum (\hat{y}_i - \bar{y})^2 \) | Explained variation                     | \( k \)               |
+| SSE       | \( \sum (y_i - \hat{y}_i)^2 \) | Unexplained (residual) variation         | \( n - k - 1 \)       |
+
 
 Note:
+- \( n \): number of observations
+- \( k \): number of predictors 
+- \( k+1 \): number of coefficients
 - The degrees of freedom add up: \( (k) + (n - k - 1) = (n - 1) \).
 - SSR + SSE = TSS.
 
