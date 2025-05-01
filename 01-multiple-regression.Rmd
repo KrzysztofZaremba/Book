@@ -361,9 +361,8 @@ We convert the categorical race variable into a set of **three dummy variables**
 
 We also interact each dummy with the continuous variable **years of education**, allowing the **slope** of the income–education relationship to differ by race.
 
----
 
-## The Regression Equation
+##### The Regression Equation
 
 We estimate the following model:
 
@@ -482,7 +481,7 @@ Let’s plug the values into the model:
 
 ---
 
-### 📌 Summary
+##### 📌 Summary
 
 | Race  | Bachelor's Degree | Master's Degree |
 |--------|-------------------|------------------|
